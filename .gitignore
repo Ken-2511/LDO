@@ -1,0 +1,27 @@
+# KiCad backups and temporary files
+*-backups/
+*.bak
+*.bck
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*-bak
+*~
+_autosave-*
+\#auto_saved_files#
+~*.lck
+*.lck
+fp-info-cache
+
+# Local per-user project state
+*.kicad_prl
+
+# Generated outputs
+*.gbr
+*.drl
+*.pos
+gerbers/
+production/
+
+# OS files
+.DS_Store
+Thumbs.db
