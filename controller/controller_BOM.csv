@@ -1,0 +1,6 @@
+"Comment","Qty","Designator","Footprint","MPN","LCSC Part #"
+"10uF 25V","1","C1","Capacitor_SMD:C_0805_2012Metric_Pad1.18x1.45mm_HandSolder","CL21A106KAYNNNE","C15850"
+"500mA","1","F1","Fuse:Fuse_1206_3216Metric_Pad1.42x1.75mm_HandSolder","MF-NSMF050-2","C75464"
+"Stack_2x05","1","J1","Connector_PinSocket_2.54mm:PinSocket_2x05_P2.54mm_Vertical","PM254V-12-10P-H85","C492399"
+"4.7k","2","R1,R2","Resistor_SMD:R_0603_1608Metric_Pad0.98x0.95mm_HandSolder","0603WAF4701T5E","C23162"
+"XIAO_nRF52840","1","U1","controller:XIAO_nRF52840_SMD","Seeed XIAO nRF52840",""
