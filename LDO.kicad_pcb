@@ -762,7 +762,7 @@
 				)
 			)
 		)
-		(property "MPN" "RC0805FR-074R7L"
+		(property "MPN" "SR0805FR-7W4R7L"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -774,7 +774,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C137513"
+		(property "LCSC" "C873778"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -2438,30 +2438,6 @@
 			(effects
 				(font
 					(size 1 1)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "MPN" "ESW-105-12-L-D"
-			(at 0 0 0)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "c69cd0b7-7ee7-4b53-991f-e1dbe54cbd1d")
-			(effects
-				(font
-					(size 1.27 1.27)
-					(thickness 0.15)
-				)
-			)
-		)
-		(property "LCSC" "C22073008"
-			(at 0 0 0)
-			(layer "F.Fab")
-			(hide yes)
-			(uuid "4152cb14-d957-4efb-b344-9ef9c58a265b")
-			(effects
-				(font
-					(size 1.27 1.27)
 					(thickness 0.15)
 				)
 			)
