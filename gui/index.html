@@ -1,0 +1,197 @@
+<!doctype html>
+<!-- LDO stack GUI: connects to the XIAO over Web Bluetooth (Nordic UART Service), finds the LDO boards
+     on I2C, sets each board's output voltage and shows live voltage and current. Open in Chrome or Edge. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LDO Stack</title>
+<style>
+  :root { --bg: #fafaf8; --fg: #1d1d1b; --muted: #6b6a65; --line: #d8d6ce; --ok: #2f7d32; --off: #a5a39b; --accent: #2b6cb0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1c1a; --fg: #ecebe6; --muted: #a09e96; --line: #3a3935; --ok: #6cc070; --off: #5d5c57; --accent: #7aa7e0; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  #status { color: var(--muted); margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  button { font: inherit; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--fg); cursor: pointer; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  input { font: inherit; width: 80px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--fg); }
+  .scroll { overflow-x: auto; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-weight: 500; color: var(--muted); }
+  td.num { font-variant-numeric: tabular-nums; }
+  .ok { color: var(--ok); }
+  .off { color: var(--off); }
+  #log { font: 13px/1.4 ui-monospace, monospace; border: 1px solid var(--line); border-radius: 6px; padding: 8px; height: 160px; overflow-y: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>LDO Stack</h1>
+  <div id="status">Not connected</div>
+
+  <div class="row">
+    <button id="connect" class="primary">Connect</button>
+    <button id="scan" disabled>Scan I2C</button>
+    <button id="disconnect" disabled>Disconnect</button>
+  </div>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Board (jumper)</th><th>DAC / INA</th><th>Set output</th><th>Voltage</th><th>Current</th></tr></thead>
+      <tbody id="boards"></tbody>
+    </table>
+  </div>
+  <div id="other" style="color: var(--muted); margin-bottom: 16px;"></div>
+
+  <div id="log"></div>
+</main>
+
+<script>
+// Nordic UART Service: the XIAO receives on RX and sends on TX.
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+// One row per LDO board address setting (the jumper fitted on that board).
+const SLOTS = [
+  { jumper: 'JP4 (GND)', dac: 0x48, ina: 0x40 },
+  { jumper: 'JP1 (3V3)', dac: 0x49, ina: 0x41 },
+  { jumper: 'JP2 (SDA)', dac: 0x4A, ina: 0x42 },
+  { jumper: 'JP3 (SCL)', dac: 0x4B, ina: 0x43 },
+];
+const VMIN = 0.1, VMAX = 2.6;  // DAC 0-2.5 V plus the 0.1 V SET offset
+
+const $ = (id) => document.getElementById(id);
+let device = null, rx = null, rxText = '', found = [], polling = false;
+
+function log(text) {
+  const el = $('log');
+  el.textContent += text + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+const hex = (a) => a.toString(16).toUpperCase().padStart(2, '0');
+
+// The firmware answers every command with exactly one line, so commands run one at a time
+// and each waits for its own reply.
+let waiter = null, queue = Promise.resolve();
+
+function request(cmd, quiet = false) {
+  const job = queue.then(() => new Promise((resolve) => {
+    const timer = setTimeout(() => { waiter = null; resolve(null); }, 2000);
+    waiter = (line) => { clearTimeout(timer); if (!quiet) log('< ' + line); resolve(line); };
+    if (!quiet) log('> ' + cmd);
+    rx.writeValue(new TextEncoder().encode(cmd + '\n')).catch((e) => log('Send failed: ' + e.message));
+  }));
+  queue = job.catch(() => {});
+  return job;
+}
+
+function onData(event) {
+  rxText += new TextDecoder().decode(event.target.value);
+  let i;
+  while ((i = rxText.indexOf('\n')) >= 0) {
+    const line = rxText.slice(0, i).trim();
+    rxText = rxText.slice(i + 1);
+    if (!line) continue;
+    if (waiter) { const w = waiter; waiter = null; w(line); } else log('< ' + line);
+  }
+}
+
+function renderBoards() {
+  $('boards').innerHTML = SLOTS.map((s, i) => {
+    const dac = found.includes(s.dac), ina = found.includes(s.ina);
+    const chips = `<span class="${dac ? 'ok' : 'off'}">0x${hex(s.dac)}</span> / <span class="${ina ? 'ok' : 'off'}">0x${hex(s.ina)}</span>`;
+    const setCell = dac
+      ? `<input id="v${i}" type="number" min="${VMIN}" max="${VMAX}" step="0.001" value="1.000"> V <button id="set${i}">Set</button>`
+      : '<span class="off">not found</span>';
+    return `<tr><td>${s.jumper}</td><td>${chips}</td><td>${setCell}</td>`
+      + `<td class="num" id="mv${i}">${ina ? '…' : '–'}</td><td class="num" id="ma${i}">${ina ? '…' : '–'}</td></tr>`;
+  }).join('');
+  SLOTS.forEach((s, i) => {
+    const b = $('set' + i);
+    if (b) b.onclick = () => setVoltage(i);
+  });
+  const known = SLOTS.flatMap((s) => [s.dac, s.ina]);
+  const other = found.filter((a) => !known.includes(a));
+  $('other').textContent = !device || !device.gatt.connected ? ''
+    : found.length === 0 ? 'No I2C devices answered.'
+    : other.length ? 'Other devices: ' + other.map((a) => '0x' + hex(a)).join(', ') : '';
+}
+
+async function scan() {
+  const line = await request('scan');
+  if (!line || !line.startsWith('scan')) return;
+  found = line.split(' ').slice(1).filter(Boolean).map((h) => parseInt(h, 16));
+  renderBoards();
+}
+
+async function setVoltage(i) {
+  const v = parseFloat($('v' + i).value);
+  if (!(v >= VMIN && v <= VMAX)) {
+    log(`Enter a voltage between ${VMIN} and ${VMAX} V.`);
+    return;
+  }
+  const line = await request(`set ${hex(SLOTS[i].dac)} ${Math.round(v * 1000)}`);
+  if (line && line.startsWith('set')) $('v' + i).value = (parseInt(line.split(' ')[2], 10) / 1000).toFixed(3);
+}
+
+// Every second, read voltage and current from each INA226 that answered the scan.
+async function poll() {
+  if (polling || !device || !device.gatt.connected) return;
+  polling = true;
+  for (const [i, s] of SLOTS.entries()) {
+    if (!found.includes(s.ina)) continue;
+    const line = await request(`read ${hex(s.ina)}`, true);
+    if (!line || !line.startsWith('read')) continue;
+    const [, , uv, ua] = line.split(' ');
+    $('mv' + i).textContent = (uv / 1e6).toFixed(4) + ' V';
+    $('ma' + i).textContent = (ua / 1e3).toFixed(3) + ' mA';
+  }
+  polling = false;
+}
+setInterval(poll, 1000);
+
+function setConnected(on) {
+  $('status').textContent = on ? 'Connected to ' + device.name : 'Not connected';
+  $('connect').disabled = on;
+  $('scan').disabled = !on;
+  $('disconnect').disabled = !on;
+  if (!on) { found = []; waiter = null; renderBoards(); }
+}
+
+$('connect').onclick = async () => {
+  if (!navigator.bluetooth) {
+    log('This browser has no Web Bluetooth. Use Chrome or Edge.');
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'LDO' }], optionalServices: [NUS] });
+    device.addEventListener('gattserverdisconnected', () => { setConnected(false); log('Disconnected'); });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(NUS);
+    rx = await service.getCharacteristic(NUS_RX);
+    const tx = await service.getCharacteristic(NUS_TX);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', onData);
+    setConnected(true);
+    await request('ping');
+    await scan();
+  } catch (e) {
+    log('Connect failed: ' + e.message);
+  }
+};
+
+$('scan').onclick = scan;
+$('disconnect').onclick = () => device && device.gatt.disconnect();
+
+renderBoards();
+</script>
+</body>
+</html>
